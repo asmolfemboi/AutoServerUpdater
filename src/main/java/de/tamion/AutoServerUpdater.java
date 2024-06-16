@@ -1,6 +1,8 @@
 package de.tamion;
 
+import com.destroystokyo.paper.util.VersionFetcher;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.papermc.paper.ServerBuildInfo;
 import org.apache.commons.io.FileUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -8,6 +10,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
+import java.util.Arrays;
 import java.util.logging.Level;
 
 public final class AutoServerUpdater extends JavaPlugin {
@@ -15,11 +18,12 @@ public final class AutoServerUpdater extends JavaPlugin {
     @Override
     public void onEnable() {
         File serverjar = new File(System.getProperty("java.class.path"));
-        String[] buildversion = Bukkit.getVersion().split(" ");
-        String version = buildversion[2].replaceAll("\\)", "");
+        ServerBuildInfo buildInfo = ServerBuildInfo.buildInfo();
+
+        String build = "" + buildInfo.buildNumber().orElse(-1);
+        String version = buildInfo.minecraftVersionId();
         try {
-            if (buildversion[0].contains("Paper")) {
-                String build = buildversion[0].replaceAll("git-Paper-", "");
+            if (buildInfo.brandName().contains("Paper")) {
                 String[] builds = new ObjectMapper().readTree(new URL("https://api.papermc.io/v2/projects/paper/versions/" + version)).get("builds").toString().replaceAll("\\[", "").replaceAll("]", "").split(",");
                 String latestbuild = builds[builds.length - 1];
                 if (!latestbuild.equals(build)) {
@@ -29,8 +33,7 @@ public final class AutoServerUpdater extends JavaPlugin {
                     Bukkit.getServer().spigot().restart();
                     return;
                 }
-            } else if (buildversion[0].contains("Purpur")) {
-                String build = buildversion[0].replaceAll("git-Purpur-", "");
+            } else if (buildInfo.brandName().contains("Purpur")) {
                 String latestbuild = new ObjectMapper().readTree(new URL("https://api.purpurmc.org/v2/purpur/" + version + "/latest")).get("build").asText();
                 if (!latestbuild.equals(build)) {
                     getLogger().warning("Old Purpur build detected. Updating from build " + build + " to " + latestbuild);
