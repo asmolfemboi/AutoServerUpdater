@@ -1,6 +1,6 @@
 package de.tamion;
 
-import com.destroystokyo.paper.util.VersionFetcher;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.papermc.paper.ServerBuildInfo;
 import org.apache.commons.io.FileUtils;
@@ -9,46 +9,108 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.Arrays;
 import java.util.logging.Level;
 
 public final class AutoServerUpdater extends JavaPlugin {
 
+    private final String USER_AGENT = "AutoServerUpdater/1.0 (contact@tamion.de)";
+
     @Override
     public void onEnable() {
-        File serverjar = new File(System.getProperty("java.class.path"));
+        saveDefaultConfig();
+
+        File serverJar = new File(System.getProperty("java.class.path"));
         ServerBuildInfo buildInfo = ServerBuildInfo.buildInfo();
 
-        String build = "" + buildInfo.buildNumber().orElse(-1);
-        String version = buildInfo.minecraftVersionId();
+        int currentBuildInt = buildInfo.buildNumber().isPresent() ? buildInfo.buildNumber().getAsInt() : -1;
+        String mcVersion = buildInfo.minecraftVersionId();
+
         try {
+            String downloadUrl = null;
+            String latestBuildStr = null;
+
             if (buildInfo.brandName().contains("Paper")) {
-                String[] builds = new ObjectMapper().readTree(new URL("https://api.papermc.io/v2/projects/paper/versions/" + version)).get("builds").toString().replaceAll("\\[", "").replaceAll("]", "").split(",");
-                String latestbuild = builds[builds.length - 1];
-                if (!latestbuild.equals(build)) {
-                    getLogger().warning("Old Paper build detected. Updating from build " + build + " to " + latestbuild);
-                    FileUtils.copyURLToFile(new URL("https://api.papermc.io/v2/projects/paper/versions/" + version + "/builds/" + latestbuild + "/downloads/paper-" + version + "-" + latestbuild + ".jar"), serverjar);
-                    getLogger().warning("Downloaded Paper build " + latestbuild + ". Restarting... If no restart script has been setup you will need to manually start the server");
-                    Bukkit.getServer().spigot().restart();
-                    return;
+                JsonNode root = fetchJson("https://fill.papermc.io/v3/projects/paper/versions/" + mcVersion + "/builds");
+
+                if (root != null && root.isArray() && root.size() > 0) {
+                    int highestBuildFound = -1;
+                    JsonNode bestBuildObj = null;
+
+                    for (JsonNode buildNode : root) {
+                        if (buildNode.has("id")) {
+                            int buildId = buildNode.get("id").asInt();
+                            if (buildId > highestBuildFound) {
+                                highestBuildFound = buildId;
+                                bestBuildObj = buildNode;
+                            }
+                        }
+                    }
+
+                    if (bestBuildObj != null) {
+                        latestBuildStr = String.valueOf(highestBuildFound);
+                        if (highestBuildFound > currentBuildInt) {
+                            JsonNode downloads = bestBuildObj.get("downloads");
+                            if (downloads != null && downloads.has("server:default")) {
+                                downloadUrl = downloads.get("server:default").get("url").asText();
+                            }
+                        }
+                    }
                 }
+
             } else if (buildInfo.brandName().contains("Purpur")) {
-                String latestbuild = new ObjectMapper().readTree(new URL("https://api.purpurmc.org/v2/purpur/" + version + "/latest")).get("build").asText();
-                if (!latestbuild.equals(build)) {
-                    getLogger().warning("Old Purpur build detected. Updating from build " + build + " to " + latestbuild);
-                    FileUtils.copyURLToFile(new URL("https://api.purpurmc.org/v2/purpur/" + version + "/" + latestbuild + "/download"), serverjar);
-                    getLogger().warning("Downloaded Purpur build " + latestbuild + ". Restarting... If no restart script has been setup you will need to manually start the server");
+                JsonNode root = fetchJson("https://api.purpurmc.org/v2/purpur/" + mcVersion + "/latest");
+                if (root != null && root.has("build")) {
+                    latestBuildStr = root.get("build").asText();
+                    int latestPurpurBuild = Integer.parseInt(latestBuildStr);
+                    if (latestPurpurBuild > currentBuildInt) {
+                        downloadUrl = "https://api.purpurmc.org/v2/purpur/" + mcVersion + "/" + latestBuildStr + "/download";
+                    }
+                }
+            }
+
+            if (downloadUrl != null) {
+                getLogger().warning("Update found! Current build: " + currentBuildInt + " -> New build: " + latestBuildStr);
+                downloadFile(downloadUrl, serverJar);
+
+                String action = getConfig().getString("update-action", "RESTART").toUpperCase();
+                if (action.equals("STOP")) {
+                    getLogger().warning("Download complete. Shutting down server as requested...");
+                    Bukkit.shutdown();
+                } else {
+                    getLogger().warning("Download complete. Triggering Spigot restart...");
                     Bukkit.getServer().spigot().restart();
-                    return;
                 }
             } else {
-                getLogger().log(Level.SEVERE, "SERVER SOFTWARE NOT SUPPORTED BY AUTOSERVERUPDATER");
+                getLogger().info("Server is up to date (Build " + currentBuildInt + ").");
+                Bukkit.getPluginManager().disablePlugin(this);
             }
-            getLogger().info("Latest Build installed!");
-            Bukkit.getPluginManager().disablePlugin(this);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+
+        } catch (Exception e) {
+            getLogger().log(Level.SEVERE, "Error during update process: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private JsonNode fetchJson(String urlString) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
+        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setConnectTimeout(5000);
+        if (conn.getResponseCode() != 200) return null;
+        try (InputStream in = conn.getInputStream()) {
+            return new ObjectMapper().readTree(in);
+        }
+    }
+
+    private void downloadFile(String urlString, File target) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlString).openConnection();
+        conn.setRequestProperty("User-Agent", USER_AGENT);
+        conn.setInstanceFollowRedirects(true);
+        try (InputStream in = conn.getInputStream()) {
+            FileUtils.copyInputStreamToFile(in, target);
         }
     }
 }

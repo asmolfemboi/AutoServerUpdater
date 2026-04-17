@@ -3,5 +3,5 @@ version: '${project.version}'
 main: de.tamion.AutoServerUpdater
 api-version: '1.13'
 load: STARTUP
-authors: [Tamion]
+authors: [Tamion, FemBoysAreCut3]
 description: Automatically updates the server to the latest build for your version

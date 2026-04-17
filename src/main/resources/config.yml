@@ -1,0 +1,6 @@
+# AutoServerUpdater Configuration
+
+# Choose what happens after a successful update download:
+# RESTART: Uses Bukkit's built-in restart command (Requires a start script).
+# STOP: Simply shuts down the server. Recommended for clean updates with external scripts.
+update-action: STOP
